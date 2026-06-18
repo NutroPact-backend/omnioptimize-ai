@@ -55,7 +55,7 @@ const NAV_ITEMS = [
   { icon: Megaphone, label: "Ad Campaigns", active: false, path: "/campaigns" },
   { icon: Network, label: "Entity Graph", active: false, path: "/dashboard" },
   { icon: LineChart, label: "Reports", active: false, path: "/dashboard" },
-  { icon: Settings, label: "Settings", active: false, path: "/dashboard" },
+  { icon: Settings, label: "Settings", active: false, path: "/settings" },
 ];
 
 /* ───── KPI card component ───── */

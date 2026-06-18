@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { vly } from "../lib/vly-integrations";
 
 /**
@@ -46,6 +47,8 @@ interface WebsiteAnalysisResult {
 
 /**
  * Analyze website content, structure, and conversion readiness.
+ * Now consumes real crawled data from the HTTP crawler before
+ * running AI analysis, replacing the previous fully simulated approach.
  */
 export const analyzeWebsite = action({
   args: {
@@ -53,11 +56,64 @@ export const analyzeWebsite = action({
     url: v.string(),
     name: v.string(),
   },
-  handler: async (_ctx, args): Promise<WebsiteAnalysisResult> => {
+  handler: async (ctx, args): Promise<WebsiteAnalysisResult> => {
     const { url, name } = args;
 
     try {
-      // Phase 1: Full content & technical audit
+      // Phase 1: Crawl the actual website to get real content
+      const crawlResult = await ctx.runAction(internal.crawler.crawlAndExtract, {
+        url,
+        projectId: args.projectId,
+      });
+
+      // Build a rich content context from the real crawl data
+      let crawlContext = "";
+      if (crawlResult.success && crawlResult.mainPage) {
+        const page = crawlResult.mainPage;
+        crawlContext = [
+          `=== REAL CRAWL DATA ===`,
+          `URL: ${page.url}`,
+          `Title: ${page.title}`,
+          `Meta Description: ${page.metaDescription}`,
+          `Word Count: ${page.wordCount}`,
+          `Status Code: ${page.statusCode}`,
+          `Content Type: ${page.contentType}`,
+          page.canonicalUrl !== page.url ? `Canonical URL: ${page.canonicalUrl}` : "",
+          page.ogTitle ? `OG Title: ${page.ogTitle}` : "",
+          page.ogDescription ? `OG Description: ${page.ogDescription}` : "",
+          page.ogImage ? `OG Image: ${page.ogImage}` : "",
+          "",
+          `=== HEADINGS STRUCTURE ===`,
+          page.headings.h1.length > 0 ? `H1: ${page.headings.h1.join(" | ")}` : "No H1 found",
+          page.headings.h2.length > 0 ? `H2s (${page.headings.h2.length}): ${page.headings.h2.slice(0, 10).join(" | ")}` : "No H2s found",
+          page.headings.h3.length > 0 ? `H3s (${page.headings.h3.length}): ${page.headings.h3.slice(0, 10).join(" | ")}` : "",
+          "",
+          `=== LINKS ===`,
+          `Internal Links: ${page.internalLinks.length}`,
+          `External Links: ${page.externalLinks.length}`,
+          "",
+          `=== SCHEMA MARKUP (${page.schemaMarkup.length} blocks) ===`,
+          page.schemaMarkup.length > 0
+            ? page.schemaMarkup.slice(0, 5).map((s) => {
+                try {
+                  const parsed = JSON.parse(s);
+                  return `- @type: ${parsed["@type"] || "Unknown"}, context: ${parsed["@context"] || ""}`;
+                } catch {
+                  return "- (unparseable schema)";
+                }
+              }).join("\n")
+            : "No JSON-LD schema found",
+          "",
+          `=== EXTRACTED ENTITIES ===`,
+          crawlResult.extractedEntities.length > 0
+            ? crawlResult.extractedEntities.slice(0, 20).join(", ")
+            : "No entities extracted",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      // Phase 2: AI analysis using REAL crawled data as context
       const contentAudit = await vly.ai.completion({
         model: "gpt-4o-mini",
         messages: [
@@ -65,18 +121,21 @@ export const analyzeWebsite = action({
             role: "system",
             content:
               "You are an expert website analyst specializing in conversion optimization, SEO, and UX audit. " +
-              "Analyze websites thoroughly and produce structured, data-driven reports.",
+              "Analyze websites thoroughly and produce structured, data-driven reports. " +
+              "Use the real crawl data provided to ground your analysis in actual facts.",
           },
           {
             role: "user",
             content: `Analyze the website "${name}" at URL: ${url}
 
+${crawlContext || `(Note: Real crawl was not available — performing analysis based on the URL and brand name: ${name})`}
+
 Perform a comprehensive audit covering these dimensions:
 
-1. **CONTENT_INVENTORY** — Assess the likely quality, depth, and structure of content on the site.
-2. **TECHNICAL_SIGNALS** — Estimate Core Web Vitals health, mobile responsiveness, page speed concerns.
-3. **SCHEMA_STATUS** — Evaluate likely structured data presence (Product, Organization, FAQ, Review, BreadcrumbList).
-4. **READABILITY** — Assess the likely readability and clarity of the content.
+1. **CONTENT_INVENTORY** — Based on the real page data above, assess the quality, depth, and structure of content.
+2. **TECHNICAL_SIGNALS** — Estimate Core Web Vitals health, mobile responsiveness, page speed concerns based on content structure.
+3. **SCHEMA_STATUS** — Evaluate the actual structured data found in the crawl.
+4. **READABILITY** — Assess the readability and clarity of the headings and content.
 5. **KEYWORD_COVERAGE** — Estimate the breadth and depth of topical keyword coverage.
 6. **ORGANIC_VISIBILITY** — Estimate how visible the site likely is in search results.
 
@@ -100,7 +159,7 @@ For each friction point, provide:
 
 Return ONLY valid JSON in this exact shape:
 {
-  "pagesCrawled": <estimated number of pages>,
+  "pagesCrawled": <1 if crawl succeeded, 0 if not>,
   "readabilityScore": <0-100>,
   "keywordCoverage": <0-100>,
   "schemaHealthScore": <0-100>,
@@ -124,7 +183,7 @@ Return ONLY valid JSON in this exact shape:
           },
         ],
         temperature: 0.3,
-        maxTokens: 2500,
+        maxTokens: 3000,
       });
 
       if (!contentAudit.success || !contentAudit.data) {
@@ -142,7 +201,7 @@ Return ONLY valid JSON in this exact shape:
         summary: result.summary || "Website analysis completed.",
         overallScore: result.overallScore ?? 0,
         confidence: 0.85,
-        pagesCrawled: result.pagesCrawled ?? 0,
+        pagesCrawled: crawlResult.success && crawlResult.mainPage ? 1 : result.pagesCrawled ?? 0,
         readabilityScore: result.readabilityScore ?? 0,
         keywordCoverage: result.keywordCoverage ?? 0,
         schemaHealthScore: result.schemaHealthScore ?? 0,
