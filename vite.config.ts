@@ -80,11 +80,7 @@ export default defineConfig({
     // Exclude heavy optional dependencies for faster dev server start
     exclude: ['three', '@react-three/fiber', '@react-three/drei'],
   },
-  // Performance hints
   server: {
-    // Keep HMR on, but disable full-screen error overlay
-    hmr: {
-      overlay: false,
-    },
+    hmr: false,
   },
 });
