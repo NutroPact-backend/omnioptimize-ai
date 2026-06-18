@@ -282,6 +282,98 @@ const schema = defineSchema(
       ctr: v.optional(v.float64()),
       cvr: v.optional(v.float64()),
     }).index("by_campaignId_date", ["campaignId", "date"]),
+
+    // ── Agent Sessions: orchestration runs ──
+    agentSessions: defineTable({
+      sessionType: v.string(),
+      status: v.union(
+        v.literal("pending"),
+        v.literal("running"),
+        v.literal("completed"),
+        v.literal("failed"),
+        v.literal("awaiting_human"),
+      ),
+      priority: v.optional(v.float64()),
+      sourceAgent: v.string(),
+      projectId: v.optional(v.id("projects")),
+      campaignId: v.optional(v.id("campaigns")),
+      context: v.optional(v.string()),
+      result: v.optional(v.string()),
+      confidence: v.optional(v.float64()),
+      errorMessage: v.optional(v.string()),
+      metadata: v.optional(v.string()),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+      completedAt: v.optional(v.number()),
+    }).index("by_status", ["status"])
+      .index("by_sessionType", ["sessionType"])
+      .index("by_projectId", ["projectId"]),
+
+    // ── Agent Tasks: individual sub-tasks within a session ──
+    agentTasks: defineTable({
+      sessionId: v.id("agentSessions"),
+      taskType: v.string(),
+      targetAgent: v.string(),
+      status: v.union(
+        v.literal("pending"),
+        v.literal("running"),
+        v.literal("completed"),
+        v.literal("failed"),
+        v.literal("skipped"),
+      ),
+      priority: v.optional(v.float64()),
+      input: v.optional(v.string()),
+      output: v.optional(v.string()),
+      confidence: v.optional(v.float64()),
+      errorMessage: v.optional(v.string()),
+      retryCount: v.optional(v.float64()),
+      maxRetries: v.optional(v.float64()),
+      dependencies: v.optional(v.array(v.id("agentTasks"))),
+      createdAt: v.number(),
+      startedAt: v.optional(v.number()),
+      completedAt: v.optional(v.number()),
+    }).index("by_sessionId", ["sessionId"])
+      .index("by_status", ["status"])
+      .index("by_agent", ["targetAgent", "status"]),
+
+    // ── Agent Events: typed event bus for agent communication ──
+    agentEvents: defineTable({
+      eventType: v.string(),
+      sourceAgent: v.string(),
+      targetAgent: v.optional(v.string()),
+      sessionId: v.optional(v.id("agentSessions")),
+      taskId: v.optional(v.id("agentTasks")),
+      projectId: v.optional(v.id("projects")),
+      campaignId: v.optional(v.id("campaigns")),
+      payload: v.optional(v.string()),
+      status: v.union(
+        v.literal("emitted"),
+        v.literal("delivered"),
+        v.literal("acknowledged"),
+        v.literal("failed"),
+      ),
+      confidence: v.optional(v.float64()),
+      traceId: v.optional(v.string()),
+      createdAt: v.number(),
+      deliveredAt: v.optional(v.number()),
+    }).index("by_eventType_status", ["eventType", "status"])
+      .index("by_sessionId", ["sessionId"])
+      .index("by_targetAgent", ["targetAgent", "status"])
+      .index("by_traceId", ["traceId"]),
+
+    // ── Entity Relationships: knowledge graph edges ──
+    entityRelationships: defineTable({
+      projectId: v.id("projects"),
+      sourceEntityId: v.id("entities"),
+      targetEntityId: v.id("entities"),
+      relationshipType: v.string(),
+      weight: v.optional(v.float64()),
+      metadata: v.optional(v.string()),
+      createdAt: v.number(),
+    }).index("by_projectId", ["projectId"])
+      .index("by_sourceEntity", ["sourceEntityId"])
+      .index("by_targetEntity", ["targetEntityId"])
+      .index("by_relationshipType", ["projectId", "relationshipType"]),
   },
   {
     schemaValidation: false,
