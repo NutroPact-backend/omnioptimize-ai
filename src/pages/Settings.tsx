@@ -1,13 +1,14 @@
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
   BarChart3,
   Cable,
   CheckCircle2,
+  Database,
   ExternalLink,
   Link2,
   Loader2,
@@ -15,6 +16,7 @@ import {
   Megaphone,
   Menu,
   Plus,
+  RefreshCw,
   Search,
   Settings as SettingsIcon,
   Sparkles,
@@ -229,6 +231,9 @@ function ConnectionCard({
   };
 
   const [deleting, setDeleting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const ingestPlatformData = useAction(api.ingestion.ingestPlatformData);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -239,6 +244,32 @@ function ConnectionCard({
       toast.error("Failed to remove connection");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const result = await ingestPlatformData({
+        connectionId: connection._id,
+      });
+      setSyncResult(result.message);
+      if (result.success) {
+        toast.success("Data sync initiated", {
+          description: result.recordsIngested > 0
+            ? `${result.recordsIngested} record(s) ingested from ${connection.platform === "meta" ? "Meta Ads" : "Google Ads"}.`
+            : result.message,
+        });
+      } else {
+        toast.error("Sync failed", { description: result.message });
+      }
+    } catch (err) {
+      toast.error("Sync failed", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -275,9 +306,28 @@ function ConnectionCard({
             </>
           )}
         </div>
+        {syncResult && (
+          <div className="text-[11px] text-muted-foreground mt-1.5 italic truncate max-w-md">
+            {syncResult}
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs gap-1"
+          onClick={handleSync}
+          disabled={syncing}
+        >
+          {syncing ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <RefreshCw className="w-3 h-3" />
+          )}
+          Sync
+        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -346,6 +396,53 @@ function EnvVarCard({
         </div>
       </div>
     </Card>
+  );
+}
+
+/* ───── Sync All Platforms Button ───── */
+function SyncAllButton() {
+  const [syncing, setSyncing] = useState(false);
+  const syncAll = useAction(api.ingestion.syncAllPlatforms);
+
+  const handleSyncAll = async () => {
+    setSyncing(true);
+    try {
+      const result = await syncAll({});
+      if (result.success) {
+        const details = result.results
+          .map((r: any) => `${r.platform}: ${r.records ?? 0} records`)
+          .join(", ");
+        toast.success(`Synced ${result.totalRecordsIngested} total records`, {
+          description: details || "No platforms with data to sync.",
+        });
+      } else {
+        const errors = result.results.filter((r: any) => r.status === "error").map((r: any) => r.error).join("; ");
+        toast.error("Some syncs failed", { description: errors || "Unknown error" });
+      }
+    } catch (err) {
+      toast.error("Sync all failed", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <Button
+      onClick={handleSyncAll}
+      size="sm"
+      variant="outline"
+      className="text-xs gap-1.5"
+      disabled={syncing}
+    >
+      {syncing ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      ) : (
+        <Database className="w-3.5 h-3.5" />
+      )}
+      {syncing ? "Syncing…" : "Sync All"}
+    </Button>
   );
 }
 
@@ -501,13 +598,18 @@ export default function SettingsPage() {
                     Connect your ad accounts for direct API management and data ingestion
                   </p>
                 </div>
-                <Button
-                  onClick={() => setAddOpen(true)}
-                  size="sm"
-                  className="text-xs gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Connection
-                </Button>
+                <div className="flex items-center gap-2">
+                  {connections.length > 0 && (
+                    <SyncAllButton />
+                  )}
+                  <Button
+                    onClick={() => setAddOpen(true)}
+                    size="sm"
+                    className="text-xs gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Connection
+                  </Button>
+                </div>
               </div>
 
               {connections.length === 0 ? (

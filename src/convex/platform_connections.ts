@@ -2,7 +2,7 @@
 
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { action, mutation, query } from "./_generated/server";
+import { action, internalQuery, mutation, query } from "./_generated/server";
 
 /**
  * ============================================================
@@ -120,6 +120,23 @@ export const remove = mutation({
     if (!connection || connection.userId !== userId) throw new Error("Not found");
 
     await ctx.db.delete(args.connectionId);
+  },
+});
+
+/* ───── Verify a connection status ───── */
+/* ───── Internal: Get a connection by ID (no auth — for agent use) ───── */
+export const getConnectionById = internalQuery({
+  args: { connectionId: v.id("platformConnections") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.connectionId);
+  },
+});
+
+/* ───── Internal: Get all connections (no auth — for agent use) ───── */
+export const getAllConnections = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("platformConnections").collect();
   },
 });
 

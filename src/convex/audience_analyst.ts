@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { vly } from "../lib/vly-integrations";
 
 /**
@@ -42,6 +43,7 @@ interface AudienceAnalysisResult {
 
 /**
  * Analyze and build audience personas for the given website/brand.
+ * Now consumes real website crawl data to ground the analysis.
  */
 export const analyzeAudience = action({
   args: {
@@ -49,10 +51,36 @@ export const analyzeAudience = action({
     url: v.string(),
     name: v.string(),
   },
-  handler: async (_ctx, args): Promise<AudienceAnalysisResult> => {
+  handler: async (ctx, args): Promise<AudienceAnalysisResult> => {
     const { url, name } = args;
 
     try {
+      // Phase 1: Get real website content to ground audience analysis
+      const crawlResult = await ctx.runAction(internal.crawler.crawlAndExtract, {
+        url,
+        projectId: args.projectId,
+        maxPages: 5,
+        maxDepth: 1,
+      });
+
+      // Build crawl context for the LLM
+      let crawlContext = "";
+      if (crawlResult.success && crawlResult.mainPage) {
+        const page = crawlResult.mainPage;
+        crawlContext = [
+          `=== REAL WEBSITE CRAWL DATA ===`,
+          `Site: ${name} (${url})`,
+          `Title: ${page.title}`,
+          `Description: ${page.metaDescription}`,
+          `Pages Crawled: ${crawlResult.pagesCrawled}`,
+          `Top Headings: ${page.headings.h1.slice(0, 3).join(" | ")}`,
+          `Products/Services Mentioned: ${page.headings.h2.slice(0, 5).join(", ")}`,
+          `Schema Types: ${page.schemaMarkup.map((s: string) => { try { return JSON.parse(s)["@type"] || "Unknown"; } catch { return "Unknown"; } }).join(", ")}`,
+          `Extracted Entities: ${crawlResult.extractedEntities.slice(0, 15).join(", ")}`,
+          `Site Content Summary: ${crawlResult.contentSummary.slice(0, 2000)}`,
+        ].join("\n");
+      }
+
       const audienceAudit = await vly.ai.completion({
         model: "gpt-4o-mini",
         messages: [
@@ -60,11 +88,14 @@ export const analyzeAudience = action({
             role: "system",
             content:
               "You are an expert audience intelligence analyst specializing in digital advertising " +
-              "audience segmentation, behavioral modeling, and lookalike audience prediction.",
+              "audience segmentation, behavioral modeling, and lookalike audience prediction. " +
+              "Use the real website crawl data provided to ground your audience personas in actual site content.",
           },
           {
             role: "user",
             content: `Analyze the likely audience for the brand "${name}" at website: ${url}
+
+${crawlContext || `(Note: Live crawl was not available. Analyzing based on the URL and brand name: ${name})`}
 
 Build a comprehensive audience intelligence report with 3-5 distinct audience personas.
 

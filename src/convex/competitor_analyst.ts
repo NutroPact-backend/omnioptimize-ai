@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { vly } from "../lib/vly-integrations";
 
 /**
@@ -43,6 +44,7 @@ interface CompetitorAnalysisResult {
 
 /**
  * Analyze the competitive landscape for the given website/brand.
+ * Now consumes real website crawl data to ground competitor intelligence.
  */
 export const analyzeCompetitors = action({
   args: {
@@ -50,10 +52,36 @@ export const analyzeCompetitors = action({
     url: v.string(),
     name: v.string(),
   },
-  handler: async (_ctx, args): Promise<CompetitorAnalysisResult> => {
+  handler: async (ctx, args): Promise<CompetitorAnalysisResult> => {
     const { url, name } = args;
 
     try {
+      // Phase 1: Get real website content to ground competitor analysis
+      const crawlResult = await ctx.runAction(internal.crawler.crawlAndExtract, {
+        url,
+        projectId: args.projectId,
+        maxPages: 5,
+        maxDepth: 1,
+      });
+
+      // Build crawl context for the LLM
+      let crawlContext = "";
+      if (crawlResult.success && crawlResult.mainPage) {
+        const page = crawlResult.mainPage;
+        crawlContext = [
+          `=== REAL WEBSITE CRAWL DATA ===`,
+          `Site: ${name} (${url})`,
+          `Title: ${page.title}`,
+          `Description: ${page.metaDescription}`,
+          `Pages Crawled: ${crawlResult.pagesCrawled}`,
+          `Top Headings: ${page.headings.h1.slice(0, 3).join(" | ")}`,
+          `Products/Services: ${page.headings.h2.slice(0, 8).join(", ")}`,
+          `Schema Types: ${page.schemaMarkup.map((s: string) => { try { return JSON.parse(s)["@type"] || "Unknown"; } catch { return "Unknown"; } }).join(", ")}`,
+          `Key Entities: ${crawlResult.extractedEntities.slice(0, 15).join(", ")}`,
+          `Site Content: ${crawlResult.contentSummary.slice(0, 1500)}`,
+        ].join("\n");
+      }
+
       const competitorAudit = await vly.ai.completion({
         model: "gpt-4o-mini",
         messages: [
@@ -62,13 +90,15 @@ export const analyzeCompetitors = action({
             content:
               "You are an expert competitive intelligence analyst specializing in digital advertising. " +
               "You analyze competitor strategies across Meta Ads and Google Ads, identify positioning gaps, " +
-              "and recommend actionable competitive advantages.",
+              "and recommend actionable competitive advantages. Use the real website crawl data to ground your analysis.",
           },
           {
             role: "user",
             content: `Analyze the competitive landscape for the brand "${name}" at website: ${url}
 
-Based on your knowledge of the industry and competitive dynamics, identify 3-5 likely competitors and their advertising strategies.
+${crawlContext || `(Note: Live crawl was not available. Analyzing based on the URL and brand name: ${name})`}
+
+Based on the actual site content above and your knowledge of the industry, identify 3-5 likely competitors and their advertising strategies.
 
 For each competitor, provide:
 1. **competitorName**: Name of the competitor

@@ -310,15 +310,20 @@ function extractJsonLd(html: string): string[] {
 
 /**
  * Crawl a URL, extract content, and feed into the analysis pipeline.
+ * Supports multi-page deep crawling by following internal links.
  * This replaces the previous simulated-crawl with real HTTP fetching.
  */
 export const crawlAndExtract = action({
   args: {
     url: v.string(),
     projectId: v.id("projects"),
+    maxPages: v.optional(v.float64()),
+    maxDepth: v.optional(v.float64()),
   },
   handler: async (ctx, args): Promise<CrawlResult> => {
     const { url, projectId } = args;
+    const maxPages = args.maxPages ?? 10;
+    const maxDepth = args.maxDepth ?? 2;
 
     try {
       // Emit crawl started event
@@ -326,18 +331,17 @@ export const crawlAndExtract = action({
         eventType: "crawl.started",
         sourceAgent: "crawler",
         projectId,
-        payload: JSON.stringify({ url }),
+        payload: JSON.stringify({ url, maxPages, maxDepth }),
       });
 
-      // Fetch the main page
-      const mainPage = await fetchPage(url);
-
-      if (!mainPage) {
-        throw new Error(`Failed to fetch ${url} — page returned no content`);
-      }
-
-      // Also try to fetch /robots.txt for sitemap hints
+      // Multi-page deep crawl: follow internal links up to maxDepth
+      const allPages: CrawledPage[] = [];
+      const visited = new Set<string>();
+      const queue: { pageUrl: string; depth: number }[] = [{ pageUrl: url, depth: 0 }];
+      let allEntities = new Set<string>();
       let robotsTxt = "";
+
+      // Try to fetch robots.txt once
       try {
         const robotsUrl = new URL("/robots.txt", url).href;
         const robotsResponse = await fetch(robotsUrl, {
@@ -350,41 +354,86 @@ export const crawlAndExtract = action({
         // robots.txt is non-critical
       }
 
-      // Extract named entities from content using basic NLP patterns
-      const textContent = `${mainPage.title} ${mainPage.headings.h1.join(" ")} ${mainPage.headings.h2.join(" ")} ${mainPage.metaDescription}`;
-      const extractedEntities = extractBasicEntities(textContent);
+      // Parse disallowed paths from robots.txt
+      const disallowedPaths = robotsTxt
+        .split("\n")
+        .filter((l: string) => l.toLowerCase().startsWith("disallow:"))
+        .map((l: string) => l.split(":").slice(1).join(":").trim())
+        .filter(Boolean);
 
-      // Build content summary for LLM analysis
-      const contentSummary = buildContentSummary(mainPage, robotsTxt);
+      function isDisallowed(path: string): boolean {
+        return disallowedPaths.some((d: string) => path.startsWith(d));
+      }
 
-      // Emit page discovered event
-      await ctx.runMutation(internal.event_bus.emitInternal, {
-        eventType: "crawl.page_discovered",
-        sourceAgent: "crawler",
-        projectId,
-        payload: JSON.stringify({
-          url: mainPage.url,
-          title: mainPage.title,
-          wordCount: mainPage.wordCount,
-          headings: Object.values(mainPage.headings).flat().length,
-          linksFound: mainPage.internalLinks.length + mainPage.externalLinks.length,
-          schemaCount: mainPage.schemaMarkup.length,
-        }),
-      });
+      const baseHostname = new URL(url).hostname;
 
-      // Save crawl result
-      await ctx.runMutation(internal.crawler.saveCrawlResult, {
-        projectId,
-        url: mainPage.url,
-        title: mainPage.title,
-        metaDescription: mainPage.metaDescription,
-        wordCount: mainPage.wordCount,
-        headings: JSON.stringify(mainPage.headings),
-        internalLinks: mainPage.internalLinks.slice(0, 100),
-        schemaMarkup: mainPage.schemaMarkup,
-        contentSummary,
-        pagesCrawled: 1,
-      });
+      while (queue.length > 0 && allPages.length < maxPages) {
+        const { pageUrl, depth } = queue.shift()!;
+
+        if (visited.has(pageUrl)) continue;
+        if (depth > maxDepth) continue;
+        visited.add(pageUrl);
+
+        try {
+          const urlPath = new URL(pageUrl).pathname;
+          if (isDisallowed(urlPath)) continue;
+        } catch {
+          continue;
+        }
+
+        const page = await fetchPage(pageUrl);
+        if (!page) continue;
+
+        allPages.push(page);
+
+        // Extract entities from this page
+        const pageText = `${page.title} ${page.headings.h1.join(" ")} ${page.headings.h2.join(" ")} ${page.metaDescription}`;
+        const pageEntities = extractBasicEntities(pageText);
+        for (const ent of pageEntities) allEntities.add(ent);
+
+        // Emit page discovered event for each sub-page
+        await ctx.runMutation(internal.event_bus.emitInternal, {
+          eventType: "crawl.page_discovered",
+          sourceAgent: "crawler",
+          projectId,
+          payload: JSON.stringify({
+            url: page.url,
+            title: page.title,
+            wordCount: page.wordCount,
+            depth,
+            headings: Object.values(page.headings).flat().length,
+            linksFound: page.internalLinks.length + page.externalLinks.length,
+            schemaCount: page.schemaMarkup.length,
+          }),
+        });
+
+        // Enqueue internal links for deeper crawl (same hostname, skip fragments/anchors)
+        if (depth < maxDepth) {
+          for (const link of page.internalLinks) {
+            try {
+              const linkUrl = new URL(link);
+              // Only follow same hostname
+              if (linkUrl.hostname !== baseHostname) continue;
+              // Strip fragment
+              linkUrl.hash = "";
+              const cleanUrl = linkUrl.href;
+              // Skip non-HTML resources (images, PDFs, etc.)
+              if (/[\.](pdf|zip|png|jpg|jpeg|gif|svg|ico|css|js|woff|woff2|ttf|eot)$/i.test(cleanUrl)) continue;
+              if (!visited.has(cleanUrl)) {
+                queue.push({ pageUrl: cleanUrl, depth: depth + 1 });
+              }
+            } catch {
+              // Invalid URL
+            }
+          }
+        }
+      }
+
+      // Use the main page as the primary result
+      const mainPage = allPages[0] ?? null;
+
+      // Build combined content summary from all crawled pages
+      const contentSummary = buildMultiPageContentSummary(allPages, robotsTxt);
 
       // Emit crawl completed event
       await ctx.runMutation(internal.event_bus.emitInternal, {
@@ -392,18 +441,34 @@ export const crawlAndExtract = action({
         sourceAgent: "crawler",
         projectId,
         payload: JSON.stringify({
-          url: mainPage.url,
-          pagesCrawled: 1,
-          wordCount: mainPage.wordCount,
-          entitiesExtracted: extractedEntities.length,
+          url,
+          pagesCrawled: allPages.length,
+          wordCount: allPages.reduce((sum: number, p: CrawledPage) => sum + p.wordCount, 0),
+          entitiesExtracted: allEntities.size,
         }),
       });
 
+      // Save crawl result (summary in analyses table)
+      if (mainPage) {
+        await ctx.runMutation(internal.crawler.saveCrawlResult, {
+          projectId,
+          url: mainPage.url,
+          title: mainPage.title,
+          metaDescription: mainPage.metaDescription,
+          wordCount: mainPage.wordCount,
+          headings: JSON.stringify(mainPage.headings),
+          internalLinks: mainPage.internalLinks.slice(0, 100),
+          schemaMarkup: mainPage.schemaMarkup,
+          contentSummary,
+          pagesCrawled: allPages.length,
+        });
+      }
+
       return {
-        success: true,
+        success: allPages.length > 0,
         mainPage,
-        pagesCrawled: 1,
-        extractedEntities,
+        pagesCrawled: allPages.length,
+        extractedEntities: Array.from(allEntities),
         contentSummary,
       };
     } catch (error: any) {
@@ -447,7 +512,75 @@ function extractBasicEntities(text: string): string[] {
   return Array.from(entities);
 }
 
-/* ───── Build content summary string ───── */
+/* ───── Build multi-page content summary string ───── */
+
+function buildMultiPageContentSummary(pages: CrawledPage[], robotsTxt: string): string {
+  if (pages.length === 0) return "";
+
+  const parts: string[] = [];
+  parts.push(`=== DEEP CRAWL SUMMARY (${pages.length} pages) ===`);
+  parts.push("");
+
+  for (let i = 0; i < Math.min(pages.length, 10); i++) {
+    const page = pages[i];
+    parts.push(`--- Page ${i + 1}: ${page.url} ---`);
+    parts.push(`Title: ${page.title}`);
+    if (page.metaDescription) parts.push(`Description: ${page.metaDescription}`);
+    const headingSummary = Object.entries(page.headings)
+      .filter(([, vals]) => vals.length > 0)
+      .map(([tag, vals]) => `${tag.toUpperCase()}: ${vals.slice(0, 5).join(" | ")}${vals.length > 5 ? ` (+${vals.length - 5} more)` : ""}`)
+      .join("\n");
+    if (headingSummary) parts.push(`Headings:\n${headingSummary}`);
+    parts.push(`Word count: ${page.wordCount}`);
+    parts.push(`Internal links: ${page.internalLinks.length}, External links: ${page.externalLinks.length}`);
+    if (page.schemaMarkup.length > 0) {
+      const schemaTypes = page.schemaMarkup
+        .map((s: string) => {
+          try {
+            return JSON.parse(s)["@type"] || "Unknown";
+          } catch {
+            return "Unknown";
+          }
+        })
+        .join(", ");
+      parts.push(`Schema types: ${schemaTypes}`);
+    }
+    parts.push(`Status: ${page.statusCode}`);
+    parts.push("");
+  }
+
+  if (pages.length > 10) {
+    parts.push(`... and ${pages.length - 10} more pages`);
+    parts.push("");
+  }
+
+  // Aggregate stats
+  const totalWords = pages.reduce((sum: number, p: CrawledPage) => sum + p.wordCount, 0);
+  const totalInternalLinks = pages.reduce((sum: number, p: CrawledPage) => sum + p.internalLinks.length, 0);
+  const totalExternalLinks = pages.reduce((sum: number, p: CrawledPage) => sum + p.externalLinks.length, 0);
+  const totalSchemas = pages.reduce((sum: number, p: CrawledPage) => sum + p.schemaMarkup.length, 0);
+
+  parts.push(`=== AGGREGATE STATS ===`);
+  parts.push(`Total pages: ${pages.length}`);
+  parts.push(`Total words: ${totalWords}`);
+  parts.push(`Total internal links: ${totalInternalLinks}`);
+  parts.push(`Total external links: ${totalExternalLinks}`);
+  parts.push(`Total schema blocks: ${totalSchemas}`);
+
+  if (robotsTxt) {
+    parts.push(`Robots.txt: ${robotsTxt.slice(0, 300)}`);
+  }
+
+  // List all crawled URLs
+  parts.push(`\n=== ALL CRAWLED PAGES ===`);
+  for (const page of pages) {
+    parts.push(`- ${page.url}`);
+  }
+
+  return parts.join("\n");
+}
+
+/* ───── Build single-page content summary string (fallback) ───── */
 
 function buildContentSummary(page: CrawledPage, robotsTxt: string): string {
   const parts: string[] = [];
