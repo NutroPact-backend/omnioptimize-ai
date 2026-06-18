@@ -51,7 +51,103 @@ export interface CrawlResult {
   error?: string;
 }
 
-/* ───── Save crawl result to database ───── */
+/* ───── Save a single crawled page to the crawledPages table ───── */
+export const saveCrawledPage = internalMutation({
+  args: {
+    projectId: v.id("projects"),
+    url: v.string(),
+    depth: v.optional(v.float64()),
+    parentUrl: v.optional(v.string()),
+    title: v.optional(v.string()),
+    metaDescription: v.optional(v.string()),
+    canonicalUrl: v.optional(v.string()),
+    ogTitle: v.optional(v.string()),
+    ogDescription: v.optional(v.string()),
+    ogImage: v.optional(v.string()),
+    statusCode: v.optional(v.float64()),
+    contentType: v.optional(v.string()),
+    headings: v.optional(v.string()),
+    wordCount: v.optional(v.float64()),
+    internalLinks: v.optional(v.array(v.string())),
+    externalLinks: v.optional(v.array(v.string())),
+    schemaMarkup: v.optional(v.array(v.string())),
+    contentHash: v.optional(v.string()),
+    loadTimeMs: v.optional(v.float64()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+
+    // Check if this URL already exists for this project (for incremental recrawls)
+    const existing = await ctx.db
+      .query("crawledPages")
+      .withIndex("by_projectId_url", (q) =>
+        q.eq("projectId", args.projectId).eq("url", args.url),
+      )
+      .first();
+
+    // Compute a lightweight content hash from key fields for change detection
+    const hashInput = [
+      args.title || "",
+      args.metaDescription || "",
+      args.wordCount ?? 0,
+      (args.headings || "").slice(0, 200),
+    ].join("|");
+    const contentHash = args.contentHash ||
+      Array.from(new TextEncoder().encode(hashInput))
+        .reduce((acc, b) => acc + b, 0)
+        .toString(16);
+
+    const pageData = {
+      projectId: args.projectId,
+      url: args.url,
+      depth: args.depth ?? 0,
+      parentUrl: args.parentUrl,
+      title: args.title,
+      metaDescription: args.metaDescription,
+      canonicalUrl: args.canonicalUrl,
+      ogTitle: args.ogTitle,
+      ogDescription: args.ogDescription,
+      ogImage: args.ogImage,
+      statusCode: args.statusCode,
+      contentType: args.contentType,
+      headings: args.headings,
+      wordCount: args.wordCount,
+      internalLinks: args.internalLinks,
+      externalLinks: args.externalLinks,
+      schemaMarkup: args.schemaMarkup,
+      contentHash,
+      isIndexable: args.statusCode !== undefined && args.statusCode < 400,
+      isFollowable: true,
+      loadTimeMs: args.loadTimeMs,
+      isVectorized: false,
+      entitiesExtracted: false,
+      crawledAt: now,
+      updatedAt: now,
+    };
+
+    if (existing) {
+      // Update existing — detect content change
+      if (existing.contentHash !== contentHash) {
+        // Content changed — reset pipeline flags for reprocessing
+        await ctx.db.patch(existing._id, {
+          ...pageData,
+          isVectorized: false,
+          entitiesExtracted: false,
+          updatedAt: now,
+        });
+      } else {
+        // Content unchanged — just update the timestamp
+        await ctx.db.patch(existing._id, { crawledAt: now, updatedAt: now });
+      }
+      return { existingId: existing._id, isUpdate: true, contentChanged: existing.contentHash !== contentHash };
+    } else {
+      const id = await ctx.db.insert("crawledPages", pageData);
+      return { existingId: id, isUpdate: false, contentChanged: true };
+    }
+  },
+});
+
+/* ───── Save crawl result (summary + project metadata) ───── */
 export const saveCrawlResult = internalMutation({
   args: {
     projectId: v.id("projects"),
@@ -66,6 +162,19 @@ export const saveCrawlResult = internalMutation({
     pagesCrawled: v.optional(v.float64()),
   },
   handler: async (ctx, args) => {
+    // Persist the main page to crawledPages table as well
+    await ctx.runMutation(internal.crawler.saveCrawledPage, {
+      projectId: args.projectId,
+      url: args.url,
+      title: args.title,
+      metaDescription: args.metaDescription,
+      wordCount: args.wordCount,
+      headings: args.headings,
+      internalLinks: args.internalLinks,
+      schemaMarkup: args.schemaMarkup,
+      contentHash: `${args.wordCount ?? 0}_${(args.title || "").length}_${(args.contentSummary || "").length}`,
+    });
+
     await ctx.db.insert("analyses", {
       projectId: args.projectId,
       pagesCrawled: args.pagesCrawled ?? 1,
@@ -391,6 +500,27 @@ export const crawlAndExtract = action({
         const pageEntities = extractBasicEntities(pageText);
         for (const ent of pageEntities) allEntities.add(ent);
 
+        // Persist page to crawledPages table for future vectorization, SEO/GEO analysis
+        await ctx.runMutation(internal.crawler.saveCrawledPage, {
+          projectId,
+          url: page.url,
+          depth,
+          parentUrl: page.url === url ? undefined : queue.length > 0 ? queue[0]?.pageUrl : url,
+          title: page.title,
+          metaDescription: page.metaDescription,
+          canonicalUrl: page.canonicalUrl,
+          ogTitle: page.ogTitle,
+          ogDescription: page.ogDescription,
+          ogImage: page.ogImage,
+          statusCode: page.statusCode,
+          contentType: page.contentType,
+          headings: JSON.stringify(page.headings),
+          wordCount: page.wordCount,
+          internalLinks: page.internalLinks,
+          externalLinks: page.externalLinks,
+          schemaMarkup: page.schemaMarkup,
+        });
+
         // Emit page discovered event for each sub-page
         await ctx.runMutation(internal.event_bus.emitInternal, {
           eventType: "crawl.page_discovered",
@@ -401,6 +531,7 @@ export const crawlAndExtract = action({
             title: page.title,
             wordCount: page.wordCount,
             depth,
+            pageId: page.url, // reference by URL (can be resolved later)
             headings: Object.values(page.headings).flat().length,
             linksFound: page.internalLinks.length + page.externalLinks.length,
             schemaCount: page.schemaMarkup.length,

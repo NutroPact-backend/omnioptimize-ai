@@ -87,6 +87,16 @@ export const remove = mutation({
   },
 });
 
+/**
+ * Internal query for agent use — no auth check (caller controls access).
+ */
+export const getProjectForAgent = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.projectId);
+  },
+});
+
 export const getStats = query({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {

@@ -166,16 +166,42 @@ const schema = defineSchema(
     }).index("by_projectId", ["projectId"]),
 
     // ── Platform Connections: linked ad accounts ──
+    // Supports multiple Meta and Google Ads accounts per workspace/project
+    // with OAuth-based credential management
     platformConnections: defineTable({
       userId: v.id("users"),
+      projectId: v.optional(v.id("projects")),
       platform: adPlatformValidator,
       label: v.string(),
-      // Encrypted token reference (actual tokens stored server-side via env vars)
+      // Platform account identification
       accountId: v.string(),
-      accountName: v.optional(v.string()),
-      status: v.union(v.literal("connected"), v.literal("expired"), v.literal("error")),
+      accountDisplayName: v.optional(v.string()),
+      accountCurrency: v.optional(v.string()),
+      accountTimezone: v.optional(v.string()),
+      accountStatus: v.optional(v.string()),
+      // OAuth / credential management
+      credentialProvider: v.union(
+        v.literal("oauth"),
+        v.literal("api_key"),
+        v.literal("jwt"),
+        v.literal("service_account"),
+      ),
+      credentialVersion: v.optional(v.float64()),
+      encryptedAccessToken: v.optional(v.string()),
+      encryptedRefreshToken: v.optional(v.string()),
+      tokenType: v.optional(v.string()),
+      tokenExpiresAt: v.optional(v.number()),
+      scopes: v.optional(v.array(v.string())),
+      // Connection status
+      status: v.union(v.literal("connected"), v.literal("expired"), v.literal("error"), v.literal("pending")),
+      lastVerifiedAt: v.optional(v.number()),
+      verificationError: v.optional(v.string()),
       connectedAt: v.number(),
-    }).index("by_userId", ["userId"]),
+      updatedAt: v.number(),
+    }).index("by_userId", ["userId"])
+      .index("by_platform", ["platform"])
+      .index("by_userId_platform", ["userId", "platform"])
+      .index("by_tokenStatus", ["status", "tokenExpiresAt"]),
 
     // ── Ad Campaigns ──
     campaigns: defineTable({
@@ -404,10 +430,54 @@ const schema = defineSchema(
       createdAt: v.number(),
     }).index("by_projectId", ["projectId"]),
 
+    // ── Crawled Pages: persisted full-site crawl data ──
+    // Designed for future vectorization, entity extraction, SEO/GEO analysis,
+    // and knowledge graph enrichment. Supports incremental recrawls.
+    crawledPages: defineTable({
+      projectId: v.id("projects"),
+      url: v.string(),
+      depth: v.optional(v.float64()),
+      parentUrl: v.optional(v.string()),
+      // Core metadata
+      title: v.optional(v.string()),
+      metaDescription: v.optional(v.string()),
+      canonicalUrl: v.optional(v.string()),
+      ogTitle: v.optional(v.string()),
+      ogDescription: v.optional(v.string()),
+      ogImage: v.optional(v.string()),
+      statusCode: v.optional(v.float64()),
+      contentType: v.optional(v.string()),
+      // Content structure
+      headings: v.optional(v.string()), // JSON { h1: [], h2: [], ... }
+      wordCount: v.optional(v.float64()),
+      internalLinks: v.optional(v.array(v.string())),
+      externalLinks: v.optional(v.array(v.string())),
+      schemaMarkup: v.optional(v.array(v.string())), // JSON-LD blocks
+      // Future SEO / GEO signals
+      isIndexable: v.optional(v.boolean()),
+      isFollowable: v.optional(v.boolean()),
+      loadTimeMs: v.optional(v.float64()),
+      // Incremental recrawl support
+      contentHash: v.optional(v.string()),
+      etag: v.optional(v.string()),
+      lastModified: v.optional(v.string()),
+      // Content pipeline flags
+      isVectorized: v.optional(v.boolean()),
+      entitiesExtracted: v.optional(v.boolean()),
+      // Timestamps
+      crawledAt: v.number(),
+      updatedAt: v.number(),
+    }).index("by_projectId", ["projectId"])
+      .index("by_projectId_url", ["projectId", "url"])
+      .index("by_projectId_statusCode", ["projectId", "statusCode"])
+      .index("by_projectId_lastCrawled", ["projectId", "crawledAt"])
+      .index("by_projectId_contentHash", ["projectId", "contentHash"]),
+
     // ── Website Friction Points: page-level issues ──
     websiteFrictionPoints: defineTable({
       projectId: v.id("projects"),
       pageUrl: v.string(),
+      crawledPageId: v.optional(v.id("crawledPages")),
       issueType: v.string(),
       severity: v.union(v.literal("critical"), v.literal("high"), v.literal("medium"), v.literal("low")),
       description: v.string(),
@@ -416,7 +486,8 @@ const schema = defineSchema(
       confidence: v.optional(v.float64()),
       createdAt: v.number(),
     }).index("by_projectId", ["projectId"])
-      .index("by_projectId_severity", ["projectId", "severity"]),
+      .index("by_projectId_severity", ["projectId", "severity"])
+      .index("by_crawledPageId", ["crawledPageId"]),
   },
   {
     schemaValidation: false,

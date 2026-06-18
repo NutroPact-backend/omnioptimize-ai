@@ -382,13 +382,123 @@ export const getSession = internalQuery({
 });
 
 /* ═══════════════════════════════════════════════════════════════
- *  TASK PROCESSOR — Dispatches pending tasks to agent handlers
+ *  BACKGROUND TASK PROCESSOR — Automatic task consumption
  *
- *  Reads pending tasks from the DB, routes each to the correct
- *  handler based on targetAgent + taskType, and completes them.
- *  This closes the consumption gap: tasks created by dispatchTask
- *  are actually processed rather than bypassed.
+ *  Polls for pending tasks across all sessions and processes
+ *  them through the correct handler. This is the core worker
+ *  loop that closes Gap 1: tasks created by dispatchTask are
+ *  automatically consumed without requiring explicit orchestration.
+ *
+ *  Two modes:
+ *    1. processSessionTasks — process a specific session (existing)
+ *    2. processPendingTasks — process ALL pending tasks across sessions
  * ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * Internal: Get all sessions with pending or running status
+ */
+export const getActiveSessions = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const pending = await ctx.db
+      .query("agentSessions")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .order("asc")
+      .take(20);
+    const running = await ctx.db
+      .query("agentSessions")
+      .withIndex("by_status", (q) => q.eq("status", "running"))
+      .order("asc")
+      .take(20);
+    return [...pending, ...running];
+  },
+});
+
+/**
+ * Internal: Get all pending tasks (across all sessions, for background worker)
+ */
+export const getAllPendingTasks = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db
+      .query("agentTasks")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .order("asc")
+      .take(100);
+  },
+});
+
+/**
+ * Background worker: process all pending tasks across all sessions.
+ * Called automatically after any session mutation to ensure tasks
+ * are consumed promptly. Can also be called via cron or manually.
+ */
+export const processPendingTasks = action({
+  args: {},
+  handler: async (ctx): Promise<{ processed: number; sessionsProcessed: number }> => {
+    // Get all sessions that need processing
+    const sessions = await ctx.runQuery(internal.orchestrator.getActiveSessions);
+    let totalProcessed = 0;
+    let sessionsProcessed = 0;
+
+    for (const session of sessions) {
+      // Extract context to get projectId, url, name
+      let projectId: string | undefined;
+      let url: string | undefined;
+      let name: string | undefined;
+
+      if (session.context) {
+        try {
+          const ctx_ = JSON.parse(session.context);
+          projectId = ctx_.projectId || session.projectId;
+          url = ctx_.url;
+          name = ctx_.name;
+        } catch {
+          projectId = session.projectId;
+        }
+      } else {
+        projectId = session.projectId;
+      }
+
+      // Get the project for URL/name if available
+      try {
+        if (!url || !name) {
+          const project = await ctx.runQuery(internal.projects.getProjectForAgent, {
+            projectId: projectId as any,
+          });
+          if (project) {
+            url = url || project.url;
+            name = name || project.name;
+          }
+        }
+      } catch {
+        // Non-critical — proceed with what we have
+      }
+
+      try {
+        const result = await ctx.runAction(internal.orchestrator.processSessionTasks, {
+          sessionId: session._id,
+          projectId: projectId as any,
+          url,
+          name,
+        });
+        totalProcessed += result.processed;
+        sessionsProcessed++;
+      } catch (err: any) {
+        console.error(`[Orchestrator] Failed to process session ${session._id}:`, err?.message);
+        // Mark session as failed if processing crashes
+        try {
+          await ctx.runMutation(internal.orchestrator.finalizeSession, {
+            sessionId: session._id,
+            status: "failed",
+          });
+        } catch { /* ignore cascading errors */ }
+      }
+    }
+
+    return { processed: totalProcessed, sessionsProcessed };
+  },
+});
 
 /**
  * Process all pending tasks for a session.
