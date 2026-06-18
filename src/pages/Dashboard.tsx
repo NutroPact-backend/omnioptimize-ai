@@ -383,7 +383,10 @@ export default function Dashboard() {
   }
 
   const totalKpis = projects.reduce(
-    (acc, p) => {
+    (
+      acc: { citationScore: number; schemaHealthScore: number; pagesCrawled: number; count: number },
+      p: Doc<"projects">,
+    ) => {
       if (p.status === "analyzed") {
         acc.citationScore += p.citationScore ?? 0;
         acc.schemaHealthScore += p.schemaHealthScore ?? 0;

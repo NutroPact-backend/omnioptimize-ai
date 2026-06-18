@@ -273,7 +273,7 @@ export const autoBuildEntityRelationships = action({
           const aWords = new Set(a.name.toLowerCase().split(/\s+/));
           const bWords = new Set(b.name.toLowerCase().split(/\s+/));
           const wordArray = [...aWords];
-          const overlap = wordArray.filter((w) => bWords.has(w) && w.length > 2);
+          const overlap = wordArray.filter((w: string) => bWords.has(w) && w.length > 2);
 
           if (overlap.length > 0) {
             relationships.push({

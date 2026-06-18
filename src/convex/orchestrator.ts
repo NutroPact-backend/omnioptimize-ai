@@ -399,7 +399,16 @@ export const orchestrateProjectAnalysis = action({
     url: v.string(),
     name: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean;
+    sessionId: string;
+    error?: string;
+    analysis?: { success: boolean; [key: string]: any };
+    status?: string;
+  }> => {
     // Step 1: Create session
     const sessionId = await ctx.runMutation(internal.orchestrator.createSession, {
       sessionType: "project_analysis",
@@ -525,7 +534,15 @@ export const orchestrateCampaignCreation = action({
     campaignId: v.id("campaigns"),
     projectId: v.optional(v.id("projects")),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    success: boolean;
+    sessionId: string;
+    status: string;
+    error?: string;
+  }> => {
     const campaign = await ctx.runQuery(internal.campaigns.getByIdForAgent, {
       campaignId: args.campaignId,
     });

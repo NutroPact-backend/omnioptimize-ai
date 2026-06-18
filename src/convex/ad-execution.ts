@@ -123,7 +123,10 @@ export const launchMetaCampaign = action({
     dailyBudget: v.float64(),
     bidAmount: v.optional(v.float64()),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ success: boolean; platformCampaignId?: string; message: string }> => {
     // ── Pre-launch compliance gate ──
     const campaign = await ctx.runQuery(internal.campaigns.getByIdForAgent, {
       campaignId: args.campaignId,
@@ -252,7 +255,10 @@ export const launchGoogleCampaign = action({
     objective: v.string(),
     dailyBudget: v.float64(),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ success: boolean; platformCampaignId?: string; message: string }> => {
     // ── Pre-launch compliance gate ──
     const campaign = await ctx.runQuery(internal.campaigns.getByIdForAgent, {
       campaignId: args.campaignId,

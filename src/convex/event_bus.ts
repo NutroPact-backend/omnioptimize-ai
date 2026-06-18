@@ -218,7 +218,7 @@ export const dispatchAndProcess = action({
     confidence: v.optional(v.float64()),
     traceId: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ eventId: string; traceId: string }> => {
     const result = await ctx.runMutation(internal.event_bus.emitInternal, {
       eventType: args.eventType,
       sourceAgent: args.sourceAgent,

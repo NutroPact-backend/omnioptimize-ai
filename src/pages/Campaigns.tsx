@@ -575,7 +575,7 @@ export default function CampaignsPage() {
               </motion.div>
             ) : (
               <div className="space-y-2">
-                {campaigns.map((campaign) => (
+                {campaigns.map((campaign: Doc<"campaigns">) => (
                   <CampaignRow
                     key={campaign._id}
                     campaign={campaign}
