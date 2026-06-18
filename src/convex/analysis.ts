@@ -3,15 +3,23 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { vly } from "../lib/vly-integrations";
 
 /**
- * Run a full analysis on a project's URL using AI.
- * This simulates the 4-phase analysis pipeline:
- * 1. Content audit & crawl summary
- * 2. Entity extraction
- * 3. Competitor & SERP intelligence
- * 4. KPI scoring
+ * ============================================================
+ *  ANALYSIS — Main entry point for project analysis
+ *
+ *  Delegates to the Full Analysis Agent which runs three
+ *  sub-agents in parallel (Website Analyst, Audience Analyst,
+ *  Competitor Analyst) and produces a unified SiteAnalysisReport.
+ *
+ *  This file is the public-facing API — the Dashboard calls
+ *  `api.analysis.analyzeProject` to kick off a full analysis.
+ * ============================================================
+ */
+
+/**
+ * Run a full AI-powered analysis on a project.
+ * Orchestrates the three sub-agents in parallel and persists results.
  */
 export const analyzeProject = action({
   args: {
@@ -29,179 +37,130 @@ export const analyzeProject = action({
     });
 
     try {
-      // Phase 1: Deep crawl & content audit via AI
-      const crawlAnalysis = await vly.ai.completion({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert SEO and AI visibility analyst. Analyze the given website and produce a structured audit report. Be specific and data-driven.",
-          },
-          {
-            role: "user",
-            content: `Analyze the website "${name}" at URL: ${url}
-
-Provide a comprehensive analysis with these sections:
-1. CONTENT_INVENTORY: Estimate pages, assess content quality
-2. TECHNICAL_SIGNALS: Likely Core Web Vitals concerns, mobile readiness
-3. SCHEMA_STATUS: Likely structured data presence and quality
-4. READABILITY: Assess the likely readability of the content
-5. KEYWORD_COVERAGE: Estimate keyword coverage strength
-
-For each section, provide specific numerical scores (0-100) where applicable.
-
-Return the result as a JSON object with these fields:
-{
-  "pagesCrawled": <estimated number>,
-  "readabilityScore": <0-100>,
-  "keywordCoverage": <0-100>,
-  "schemaHealthScore": <0-100>,
-  "organicVisibilityIndex": <0-100>,
-  "summary": "<2-3 sentence analysis summary>",
-  "recommendations": ["recommendation 1", "recommendation 2", ...],
-  "entities": [{"name": "...", "type": "person|product|organization|concept|brand_term", "salience": <0-1>}, ...]
-}`,
-          },
-        ],
-        temperature: 0.3,
-        maxTokens: 2000,
+      // ── Run the Full Analysis Agent (parallel sub-agents) ──
+      const result = await ctx.runAction(internal.analysis_agent.runFullAnalysis, {
+        projectId,
+        url,
+        name,
       });
 
-      if (!crawlAnalysis.success || !crawlAnalysis.data) {
-        throw new Error("AI analysis failed: " + (crawlAnalysis.error || "No response"));
+      if (!result.success || !result.report) {
+        throw new Error(result.error || "Full analysis agent returned no report");
       }
 
-      // Parse the AI response
-      const content = crawlAnalysis.data.choices[0]?.message?.content || "";
-      let analysisData: {
-        pagesCrawled: number;
-        readabilityScore: number;
-        keywordCoverage: number;
-        schemaHealthScore: number;
-        organicVisibilityIndex: number;
-        summary: string;
-        recommendations: string[];
-        entities: Array<{ name: string; type: string; salience: number }>;
-      };
+      const report = result.report;
 
-      // Try to extract JSON from the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        analysisData = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error("Could not parse AI analysis response");
-      }
+      // ── Save analysis snapshot to analyses table ──
+      const website = report.websiteAnalysis;
+      const audience = report.audienceAnalysis;
+      const competitor = report.competitorAnalysis;
 
-      // Phase 2: Citation analysis via second AI call
-      const citationAnalysis = await vly.ai.completion({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert in AI citation tracking and Generative Engine Optimization (GEO).",
-          },
-          {
-            role: "user",
-            content: `Given a website "${name}" at ${url}, estimate its current AI visibility:
+      const combinedRecommendations = [
+        ...(website.frictionPoints?.slice(0, 3).map((fp) =>
+          `[Website] ${fp.description} — ${fp.recommendation ?? "Investigate further"}`,
+        ) ?? []),
+        ...(audience.segments?.slice(0, 2).map((seg) =>
+          `[Audience] Target "${seg.name}" segment with ${seg.bestCreativeAngle} creative angle on ${seg.channelAffinity}. Predicted LTV: $${seg.predictedLtv?.toFixed(0) ?? "N/A"}.`,
+        ) ?? []),
+        ...(competitor.competitors?.slice(0, 3).map((comp) =>
+          `[Competitor] Exploit ${comp.competitorName}'s weakness: ${comp.weakness}. Positioning gap: ${comp.positioningGap}`,
+        ) ?? []),
+      ];
 
-1. CITATION_SCORE: How likely is this site to be cited by AI assistants (ChatGPT, Perplexity, Gemini)?
-2. ENTITY_COVERAGE: How well does the site cover its key entities?
-3. COMPETITOR_GAP: How many competitor topics might exist that this site doesn't cover?
-4. LINK_EQUITY_LOSS: What percentage of pages might lack internal links?
-
-Return ONLY a JSON object:
-{
-  "citationScore": <0-100>,
-  "entityCoverageScore": <0-100>,
-  "competitorGapCount": <number>,
-  "linkEquityLoss": <0-100>
-}`,
-          },
-        ],
-        temperature: 0.3,
-        maxTokens: 1000,
-      });
-
-      if (!citationAnalysis.success || !citationAnalysis.data) {
-        throw new Error("Citation analysis failed");
-      }
-
-      const citationContent = citationAnalysis.data.choices[0]?.message?.content || "";
-      const citationMatch = citationContent.match(/\{[\s\S]*\}/);
-      let citationData: {
-        citationScore: number;
-        entityCoverageScore: number;
-        competitorGapCount: number;
-        linkEquityLoss: number;
-      } = {
-        citationScore: 0,
-        entityCoverageScore: 0,
-        competitorGapCount: 0,
-        linkEquityLoss: 0,
-      };
-
-      if (citationMatch) {
-        citationData = JSON.parse(citationMatch[0]);
-      }
-
-      // Save entities to the database
-      if (analysisData.entities && analysisData.entities.length > 0) {
-        for (const entity of analysisData.entities) {
-          await ctx.runMutation(internal.analysis_mutations.insertEntity, {
-            projectId,
-            name: entity.name,
-            type: entity.type,
-            salience: entity.salience ?? 0,
-          });
-        }
-      }
-
-      // Save the analysis snapshot
       await ctx.runMutation(internal.analysis_mutations.saveAnalysis, {
         projectId,
-        pagesCrawled: analysisData.pagesCrawled,
-        readabilityScore: analysisData.readabilityScore,
-        keywordCoverage: analysisData.keywordCoverage,
-        schemaHealthScore: analysisData.schemaHealthScore,
-        organicVisibilityIndex: analysisData.organicVisibilityIndex,
-        citationScore: citationData.citationScore,
-        entityCoverageScore: citationData.entityCoverageScore,
-        competitorGapCount: citationData.competitorGapCount,
-        linkEquityLoss: citationData.linkEquityLoss,
-        summary: analysisData.summary,
-        recommendations: analysisData.recommendations || [],
+        pagesCrawled: website.pagesCrawled,
+        readabilityScore: website.readabilityScore,
+        keywordCoverage: website.keywordCoverage,
+        schemaHealthScore: website.schemaHealthScore,
+        organicVisibilityIndex: website.organicVisibilityIndex,
+        citationScore: Math.round((website.organicVisibilityIndex + website.readabilityScore) / 2),
+        entityCoverageScore: Math.round((website.schemaHealthScore + website.keywordCoverage) / 2),
+        competitorGapCount: competitor.totalGapsFound,
+        linkEquityLoss: Math.max(0, 100 - website.organicVisibilityIndex),
+        summary: report.summary,
+        recommendations: combinedRecommendations,
       });
 
-      // Save optimization recommendations
-      if (analysisData.recommendations && analysisData.recommendations.length > 0) {
-        for (const rec of analysisData.recommendations) {
-          await ctx.runMutation(internal.analysis_mutations.insertOptimization, {
+      // ── Save entities (from friction point types and audience personas) ──
+      const entityNames = new Set<string>();
+      for (const fp of website.frictionPoints ?? []) {
+        // Use issueType as structured entity names instead of random capitalized words
+        const typeName = fp.issueType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        entityNames.add(typeName);
+        // Also extract meaningful page URLs as entities
+        if (fp.pageUrl && fp.pageUrl !== url) {
+          const pageName = fp.pageUrl.split("/").filter(Boolean).pop() || "";
+          if (pageName.length > 2) entityNames.add(pageName);
+        }
+      }
+      // Add audience segment names as entities
+      for (const seg of audience.segments ?? []) {
+        entityNames.add(seg.name);
+      }
+      // Add competitor names as entities
+      for (const comp of competitor.competitors ?? []) {
+        entityNames.add(comp.competitorName);
+      }
+      if (entityNames.size > 0) {
+        for (const name_ of entityNames) {
+          await ctx.runMutation(internal.analysis_mutations.insertEntity, {
             projectId,
-            description: rec,
-            type: "recommendation",
+            name: name_,
+            type: "concept",
+            salience: 0.5,
           });
         }
       }
 
-      // Update the project with KPI snapshot
+      // ── Save optimization recommendations ──
+      for (const rec of combinedRecommendations) {
+        await ctx.runMutation(internal.analysis_mutations.insertOptimization, {
+          projectId,
+          description: rec,
+          type: "recommendation",
+        });
+      }
+
+      // ── Update project with KPI snapshot ──
       await ctx.runMutation(internal.analysis_mutations.updateProjectKpis, {
         projectId,
-        pagesCrawled: analysisData.pagesCrawled,
-        readabilityScore: analysisData.readabilityScore,
-        keywordCoverage: analysisData.keywordCoverage,
-        schemaHealthScore: analysisData.schemaHealthScore,
-        organicVisibilityIndex: analysisData.organicVisibilityIndex,
-        citationScore: citationData.citationScore,
-        entityCoverageScore: citationData.entityCoverageScore,
-        competitorGapCount: citationData.competitorGapCount,
-        linkEquityLoss: citationData.linkEquityLoss,
-        entitiesFound: analysisData.entities?.length || 0,
-        schemaErrors: Math.max(0, Math.round((100 - analysisData.schemaHealthScore) * 0.15)),
+        pagesCrawled: website.pagesCrawled,
+        readabilityScore: website.readabilityScore,
+        keywordCoverage: website.keywordCoverage,
+        schemaHealthScore: website.schemaHealthScore,
+        organicVisibilityIndex: website.organicVisibilityIndex,
+        citationScore: Math.round((website.organicVisibilityIndex + website.readabilityScore) / 2),
+        entityCoverageScore: Math.round((website.schemaHealthScore + website.keywordCoverage) / 2),
+        competitorGapCount: competitor.totalGapsFound,
+        linkEquityLoss: Math.max(0, 100 - website.organicVisibilityIndex),
+        entitiesFound: entityNames.size,
+        schemaErrors: Math.max(0, Math.round((100 - website.schemaHealthScore) * 0.15)),
       });
 
-      return { success: true as const, analysisId: "" };
+      // ── Auto-build entity relationships on success ──
+      try {
+        await ctx.runAction(internal.knowledge_graph.autoBuildEntityRelationships, {
+          projectId,
+        });
+      } catch {
+        // Non-critical — entity graph building is best-effort
+      }
+
+      return {
+        success: true as const,
+        analysisId: "",
+        report: {
+          websiteAnalystScore: report.websiteAnalystScore,
+          audienceAnalystScore: report.audienceAnalystScore,
+          competitorAnalystScore: report.competitorAnalystScore,
+          combinedConfidence: report.combinedConfidence,
+          audienceSegments: audience.segments,
+          competitorCount: competitor.competitors.length,
+          frictionPointCount: website.frictionPoints.length,
+          topRecommendations: combinedRecommendations.slice(0, 5),
+        },
+      };
     } catch (error) {
       // Mark as error
       await ctx.runMutation(internal.analysis_mutations.setProjectStatus, {

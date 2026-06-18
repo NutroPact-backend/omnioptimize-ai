@@ -374,6 +374,49 @@ const schema = defineSchema(
       .index("by_sourceEntity", ["sourceEntityId"])
       .index("by_targetEntity", ["targetEntityId"])
       .index("by_relationshipType", ["projectId", "relationshipType"]),
+
+    // ── Audience Segments: personas from audience analyst ──
+    audienceSegments: defineTable({
+      projectId: v.id("projects"),
+      name: v.string(),
+      size: v.optional(v.float64()),
+      predictedLtv: v.optional(v.float64()),
+      channelAffinity: v.optional(v.string()),
+      bestCreativeAngle: v.optional(v.string()),
+      lookalikeQualityScore: v.optional(v.float64()),
+      behavioralTraits: v.optional(v.string()),
+      confidence: v.optional(v.float64()),
+      createdAt: v.number(),
+    }).index("by_projectId", ["projectId"]),
+
+    // ── Competitor Insights: competitor intelligence data ──
+    competitorInsights: defineTable({
+      projectId: v.id("projects"),
+      competitorName: v.string(),
+      estimatedMonthlySpend: v.optional(v.string()),
+      topCreatives: v.optional(v.string()),
+      audienceAngle: v.optional(v.string()),
+      weakness: v.optional(v.string()),
+      strengths: v.optional(v.string()),
+      positioningGap: v.optional(v.string()),
+      creativeFatigueWindow: v.optional(v.float64()),
+      confidence: v.optional(v.float64()),
+      createdAt: v.number(),
+    }).index("by_projectId", ["projectId"]),
+
+    // ── Website Friction Points: page-level issues ──
+    websiteFrictionPoints: defineTable({
+      projectId: v.id("projects"),
+      pageUrl: v.string(),
+      issueType: v.string(),
+      severity: v.union(v.literal("critical"), v.literal("high"), v.literal("medium"), v.literal("low")),
+      description: v.string(),
+      recommendation: v.optional(v.string()),
+      metricValue: v.optional(v.string()),
+      confidence: v.optional(v.float64()),
+      createdAt: v.number(),
+    }).index("by_projectId", ["projectId"])
+      .index("by_projectId_severity", ["projectId", "severity"]),
   },
   {
     schemaValidation: false,
