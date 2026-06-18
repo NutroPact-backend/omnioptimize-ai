@@ -147,10 +147,12 @@ export const getEntityRelationships = query({
     outgoing.forEach((r) => entityIds.add(r.targetEntityId));
     incoming.forEach((r) => entityIds.add(r.sourceEntityId));
 
+    const entityDocs = (await Promise.all(
+      Array.from(entityIds).map((id) => ctx.db.get(id as any)),
+    )) as any[];
+
     const entities = new Map(
-      (await Promise.all(
-        Array.from(entityIds).map((id) => ctx.db.get(id as any)),
-      )).filter(Boolean).map((e) => [e!._id, e!.name]),
+      entityDocs.filter((e) => e != null).map((e) => [e._id, e.name]),
     );
 
     return {
@@ -270,7 +272,8 @@ export const autoBuildEntityRelationships = action({
         if (typeA === typeB) {
           const aWords = new Set(a.name.toLowerCase().split(/\s+/));
           const bWords = new Set(b.name.toLowerCase().split(/\s+/));
-          const overlap = [...aWords].filter((w) => bWords.has(w) && w.length > 2);
+          const wordArray = [...aWords];
+          const overlap = wordArray.filter((w) => bWords.has(w) && w.length > 2);
 
           if (overlap.length > 0) {
             relationships.push({
