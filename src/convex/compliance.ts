@@ -1,7 +1,7 @@
 "use node";
 
 import { v } from "convex/values";
-import { action, internalMutation, mutation, query } from "./_generated/server";
+import { action, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 
 /**
@@ -344,12 +344,15 @@ export const getComplianceSummary = query({
       .order("desc")
       .collect();
 
-    const byCategory: Record<string, { passed: number; failed: number; warning: number }> = {};
+    const byCategory: Record<string, { passed: number; failed: number; warning: number; pending: number }> = {};
     for (const check of checks) {
       if (!byCategory[check.checkType]) {
-        byCategory[check.checkType] = { passed: 0, failed: 0, warning: 0 };
+        byCategory[check.checkType] = { passed: 0, failed: 0, warning: 0, pending: 0 };
       }
-      byCategory[check.checkType][check.status as keyof typeof byCategory[string]]++;
+      const status = check.status as keyof typeof byCategory[string];
+      if (status in byCategory[check.checkType]) {
+        byCategory[check.checkType][status]++;
+      }
     }
 
     return {
@@ -387,16 +390,3 @@ export const getRemediationTickets = query({
   },
 });
 
-/* ───── Internal: Update compliance status ───── */
-export const updateCampaignComplianceStatus = internalMutation({
-  args: {
-    campaignId: v.id("campaigns"),
-    status: v.union(v.literal("pending"), v.literal("passed"), v.literal("warning"), v.literal("failed")),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.patch(args.campaignId, {
-      complianceStatus: args.status,
-      updatedAt: Date.now(),
-    });
-  },
-});

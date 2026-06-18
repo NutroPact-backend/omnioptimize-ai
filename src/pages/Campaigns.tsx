@@ -1,6 +1,6 @@
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/convex/_generated/api";
-import { Id } from "@/convex/_generated/dataModel";
+import { Doc, Id } from "@/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
@@ -282,7 +282,7 @@ function CampaignRow({
   campaign,
   onDelete,
 }: {
-  campaign: NonNullable<ReturnType<typeof useQuery<typeof api.campaigns.list>>[number]>;
+  campaign: Doc<"campaigns">;
   onDelete: (id: typeof campaign._id) => void;
 }) {
   const formatter = new Intl.NumberFormat("en-US", {

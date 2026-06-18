@@ -1,6 +1,6 @@
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/convex/_generated/api";
-import { Id } from "@/convex/_generated/dataModel";
+import { Doc, Id } from "@/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -226,7 +226,7 @@ function ProjectCard({
   onDelete,
   onAnalyze,
 }: {
-  project: NonNullable<ReturnType<typeof useQuery<typeof api.projects.list>>[number]>;
+  project: Doc<"projects">;
   isAnalyzing: boolean;
   onDelete: (id: typeof project._id) => void;
   onAnalyze: (id: typeof project._id) => void;
