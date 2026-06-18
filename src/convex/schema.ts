@@ -31,6 +31,61 @@ export const projectStatusValidator = v.union(
 );
 export type ProjectStatus = Infer<typeof projectStatusValidator>;
 
+// ── Ad Campaign Platform ──
+export const AD_PLATFORM = {
+  META: "meta",
+  GOOGLE: "google",
+} as const;
+export const adPlatformValidator = v.union(
+  v.literal(AD_PLATFORM.META),
+  v.literal(AD_PLATFORM.GOOGLE),
+);
+export type AdPlatform = Infer<typeof adPlatformValidator>;
+
+export const CAMPAIGN_STATUS = {
+  DRAFT: "draft",
+  ACTIVE: "active",
+  PAUSED: "paused",
+  ARCHIVED: "archived",
+  ERROR: "error",
+} as const;
+export const campaignStatusValidator = v.union(
+  v.literal(CAMPAIGN_STATUS.DRAFT),
+  v.literal(CAMPAIGN_STATUS.ACTIVE),
+  v.literal(CAMPAIGN_STATUS.PAUSED),
+  v.literal(CAMPAIGN_STATUS.ARCHIVED),
+  v.literal(CAMPAIGN_STATUS.ERROR),
+);
+export type CampaignStatus = Infer<typeof campaignStatusValidator>;
+
+export const CAMPAIGN_OBJECTIVE = {
+  SALES: "sales",
+  LEADS: "leads",
+  TRAFFIC: "traffic",
+  AWARENESS: "awareness",
+  ENGAGEMENT: "engagement",
+} as const;
+export const campaignObjectiveValidator = v.union(
+  v.literal(CAMPAIGN_OBJECTIVE.SALES),
+  v.literal(CAMPAIGN_OBJECTIVE.LEADS),
+  v.literal(CAMPAIGN_OBJECTIVE.TRAFFIC),
+  v.literal(CAMPAIGN_OBJECTIVE.AWARENESS),
+  v.literal(CAMPAIGN_OBJECTIVE.ENGAGEMENT),
+);
+
+export const COMPLIANCE_STATUS = {
+  PENDING: "pending",
+  PASSED: "passed",
+  WARNING: "warning",
+  FAILED: "failed",
+} as const;
+export const complianceStatusValidator = v.union(
+  v.literal(COMPLIANCE_STATUS.PENDING),
+  v.literal(COMPLIANCE_STATUS.PASSED),
+  v.literal(COMPLIANCE_STATUS.WARNING),
+  v.literal(COMPLIANCE_STATUS.FAILED),
+);
+
 const schema = defineSchema(
   {
     // default auth tables using convex auth.
@@ -92,7 +147,7 @@ const schema = defineSchema(
     entities: defineTable({
       projectId: v.id("projects"),
       name: v.string(),
-      type: v.string(), // person, product, organization, concept, brand_term
+      type: v.string(),
       salience: v.optional(v.float64()),
       wikiId: v.optional(v.string()),
       sourceUrl: v.optional(v.string()),
@@ -101,7 +156,7 @@ const schema = defineSchema(
     // ── Optimizations: actions applied or recommended for a project ──
     optimizations: defineTable({
       projectId: v.id("projects"),
-      type: v.string(), // schema_fix, content_gap, entity_link, snippet_opt, etc.
+      type: v.string(),
       status: v.union(v.literal("pending"), v.literal("applied"), v.literal("rolled_back")),
       description: v.string(),
       beforeSnapshot: v.optional(v.string()),
@@ -109,6 +164,124 @@ const schema = defineSchema(
       createdAt: v.number(),
       appliedAt: v.optional(v.number()),
     }).index("by_projectId", ["projectId"]),
+
+    // ── Platform Connections: linked ad accounts ──
+    platformConnections: defineTable({
+      userId: v.id("users"),
+      platform: adPlatformValidator,
+      label: v.string(),
+      // Encrypted token reference (actual tokens stored server-side via env vars)
+      accountId: v.string(),
+      accountName: v.optional(v.string()),
+      status: v.union(v.literal("connected"), v.literal("expired"), v.literal("error")),
+      connectedAt: v.number(),
+    }).index("by_userId", ["userId"]),
+
+    // ── Ad Campaigns ──
+    campaigns: defineTable({
+      userId: v.id("users"),
+      projectId: v.optional(v.id("projects")),
+      platform: adPlatformValidator,
+      platformCampaignId: v.optional(v.string()),
+      name: v.string(),
+      objective: campaignObjectiveValidator,
+      status: campaignStatusValidator,
+      dailyBudget: v.optional(v.float64()),
+      totalBudget: v.optional(v.float64()),
+      currency: v.optional(v.string()),
+      startDate: v.optional(v.number()),
+      endDate: v.optional(v.number()),
+      targeting: v.optional(v.string()),
+      // Performance snapshot
+      impressions: v.optional(v.float64()),
+      clicks: v.optional(v.float64()),
+      conversions: v.optional(v.float64()),
+      spend: v.optional(v.float64()),
+      cpa: v.optional(v.float64()),
+      roas: v.optional(v.float64()),
+      complianceStatus: complianceStatusValidator,
+      // Recurring sync data
+      lastSyncedAt: v.optional(v.number()),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    }).index("by_userId", ["userId"]),
+
+    // ── Ad Sets ──
+    adSets: defineTable({
+      campaignId: v.id("campaigns"),
+      platformAdSetId: v.optional(v.string()),
+      name: v.string(),
+      status: campaignStatusValidator,
+      dailyBudget: v.optional(v.float64()),
+      bidAmount: v.optional(v.float64()),
+      bidStrategy: v.optional(v.string()),
+      targeting: v.optional(v.string()),
+      // Performance snapshot
+      impressions: v.optional(v.float64()),
+      clicks: v.optional(v.float64()),
+      conversions: v.optional(v.float64()),
+      spend: v.optional(v.float64()),
+      cpa: v.optional(v.float64()),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    }).index("by_campaignId", ["campaignId"]),
+
+    // ── Ad Creatives ──
+    adCreatives: defineTable({
+      campaignId: v.id("campaigns"),
+      adSetId: v.optional(v.id("adSets")),
+      platformCreativeId: v.optional(v.string()),
+      name: v.string(),
+      headline: v.optional(v.string()),
+      primaryText: v.optional(v.string()),
+      description: v.optional(v.string()),
+      callToAction: v.optional(v.string()),
+      imageUrls: v.optional(v.array(v.string())),
+      videoUrl: v.optional(v.string()),
+      landingPageUrl: v.optional(v.string()),
+      format: v.optional(v.string()),
+      status: campaignStatusValidator,
+      // Performance snapshot
+      impressions: v.optional(v.float64()),
+      clicks: v.optional(v.float64()),
+      conversions: v.optional(v.float64()),
+      spend: v.optional(v.float64()),
+      ctr: v.optional(v.float64()),
+      cvr: v.optional(v.float64()),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    }).index("by_campaignId", ["campaignId"]),
+
+    // ── Compliance Checks ──
+    complianceChecks: defineTable({
+      campaignId: v.id("campaigns"),
+      platform: adPlatformValidator,
+      checkType: v.string(),
+      status: complianceStatusValidator,
+      details: v.optional(v.string()),
+      remediation: v.optional(v.string()),
+      checkedAt: v.number(),
+    }).index("by_campaignId", ["campaignId"]),
+
+    // ── Ad Performance History (time-series) ──
+    adPerformanceRecords: defineTable({
+      campaignId: v.id("campaigns"),
+      adSetId: v.optional(v.id("adSets")),
+      creativeId: v.optional(v.id("adCreatives")),
+      date: v.number(),
+      platform: adPlatformValidator,
+      impressions: v.optional(v.float64()),
+      clicks: v.optional(v.float64()),
+      conversions: v.optional(v.float64()),
+      spend: v.optional(v.float64()),
+      cpa: v.optional(v.float64()),
+      roas: v.optional(v.float64()),
+      frequency: v.optional(v.float64()),
+      cpm: v.optional(v.float64()),
+      cpc: v.optional(v.float64()),
+      ctr: v.optional(v.float64()),
+      cvr: v.optional(v.float64()),
+    }).index("by_campaignId_date", ["campaignId", "date"]),
   },
   {
     schemaValidation: false,

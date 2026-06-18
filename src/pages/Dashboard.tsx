@@ -14,6 +14,7 @@ import {
   LineChart,
   Loader2,
   LogOut,
+  Megaphone,
   Menu,
   Network,
   Plus,
@@ -49,12 +50,12 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 
 /* ───── Sidebar nav items ───── */
 const NAV_ITEMS = [
-  { icon: BarChart3, label: "Overview", active: true },
-  { icon: Search, label: "Projects", active: false },
-  { icon: FileSearch, label: "Analysis", active: false },
-  { icon: Network, label: "Entity Graph", active: false },
-  { icon: LineChart, label: "Reports", active: false },
-  { icon: Settings, label: "Settings", active: false },
+  { icon: BarChart3, label: "Overview", active: true, path: "/dashboard" },
+  { icon: Search, label: "Projects", active: false, path: "/dashboard" },
+  { icon: Megaphone, label: "Ad Campaigns", active: false, path: "/campaigns" },
+  { icon: Network, label: "Entity Graph", active: false, path: "/dashboard" },
+  { icon: LineChart, label: "Reports", active: false, path: "/dashboard" },
+  { icon: Settings, label: "Settings", active: false, path: "/dashboard" },
 ];
 
 /* ───── KPI card component ───── */
@@ -485,6 +486,7 @@ export default function Dashboard() {
             {NAV_ITEMS.map((item) => (
               <button
                 key={item.label}
+                onClick={() => navigate(item.path)}
                 className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-all duration-200 ${
                   item.active
                     ? "bg-accent/10 text-accent font-medium"
