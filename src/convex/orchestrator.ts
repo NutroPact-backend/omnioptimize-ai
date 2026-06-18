@@ -401,24 +401,30 @@ export const processSessionTasks = action({
     url: v.optional(v.string()),
     name: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const tasks = await ctx.runQuery(internal.orchestrator.getTasksBySession, {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    processed: number;
+    remaining: number;
+  }> => {
+    const tasks: any[] = await ctx.runQuery(internal.orchestrator.getTasksBySession, {
       sessionId: args.sessionId,
     });
 
     const pending = tasks.filter(
-      (t) => t.status === "pending" &&
-        (!t.dependencies || t.dependencies.every((depId) => {
-          const dep = tasks.find((d) => d._id === depId);
+      (t: any) => t.status === "pending" &&
+        (!t.dependencies || t.dependencies.every((depId: any) => {
+          const dep = tasks.find((d: any) => d._id === depId);
           return dep?.status === "completed";
         })),
     );
 
     if (pending.length === 0) {
       // Check if all tasks are done
-      const remaining = tasks.filter((t) => t.status === "pending" || t.status === "running");
+      const remaining = tasks.filter((t: any) => t.status === "pending" || t.status === "running");
       if (remaining.length === 0) {
-        const failed = tasks.filter((t) => t.status === "failed");
+        const failed = tasks.filter((t: any) => t.status === "failed");
         await ctx.runMutation(internal.orchestrator.completeAllRemainingTasks, {
           sessionId: args.sessionId,
           status: failed.length > 0 ? "skipped" : "completed",
@@ -428,11 +434,11 @@ export const processSessionTasks = action({
           status: failed.length > 0 ? "failed" : "completed",
         });
       }
-      return { processed: 0, remaining: tasks.filter((t) => t.status === "pending" || t.status === "running").length };
+      return { processed: 0, remaining: tasks.filter((t: any) => t.status === "pending" || t.status === "running").length };
     }
 
     // Sort by priority (ascending = higher priority first)
-    pending.sort((a, b) => (a.priority ?? 5) - (b.priority ?? 5));
+    pending.sort((a: any, b: any) => (a.priority ?? 5) - (b.priority ?? 5));
 
     let processed = 0;
     for (const task of pending) {
@@ -518,7 +524,7 @@ export const processSessionTasks = action({
     }
 
     // Recursively process remaining tasks (for dependency chains)
-    const remaining = tasks.filter((t) => t.status === "pending" || t.status === "running");
+    const remaining = tasks.filter((t: any) => t.status === "pending" || t.status === "running");
     if (remaining.length > 0) {
       await ctx.runAction(internal.orchestrator.processSessionTasks, {
         sessionId: args.sessionId,

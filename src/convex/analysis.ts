@@ -38,7 +38,7 @@ export const analyzeProject = action({
 
     try {
       // ── Run the Full Analysis Agent (parallel sub-agents) ──
-      const result = await ctx.runAction(internal.analysis_agent.runFullAnalysis, {
+      const result: any = await ctx.runAction(internal.analysis_agent.runFullAnalysis, {
         projectId,
         url,
         name,
@@ -48,21 +48,21 @@ export const analyzeProject = action({
         throw new Error(result.error || "Full analysis agent returned no report");
       }
 
-      const report = result.report;
+      const report: any = result.report;
 
       // ── Save analysis snapshot to analyses table ──
-      const website = report.websiteAnalysis;
-      const audience = report.audienceAnalysis;
-      const competitor = report.competitorAnalysis;
+      const website: any = report.websiteAnalysis;
+      const audience: any = report.audienceAnalysis;
+      const competitor: any = report.competitorAnalysis;
 
       const combinedRecommendations = [
-        ...(website.frictionPoints?.slice(0, 3).map((fp) =>
+        ...(website.frictionPoints?.slice(0, 3).map((fp: any) =>
           `[Website] ${fp.description} — ${fp.recommendation ?? "Investigate further"}`,
         ) ?? []),
-        ...(audience.segments?.slice(0, 2).map((seg) =>
+        ...(audience.segments?.slice(0, 2).map((seg: any) =>
           `[Audience] Target "${seg.name}" segment with ${seg.bestCreativeAngle} creative angle on ${seg.channelAffinity}. Predicted LTV: $${seg.predictedLtv?.toFixed(0) ?? "N/A"}.`,
         ) ?? []),
-        ...(competitor.competitors?.slice(0, 3).map((comp) =>
+        ...(competitor.competitors?.slice(0, 3).map((comp: any) =>
           `[Competitor] Exploit ${comp.competitorName}'s weakness: ${comp.weakness}. Positioning gap: ${comp.positioningGap}`,
         ) ?? []),
       ];
@@ -85,8 +85,7 @@ export const analyzeProject = action({
       // ── Save entities (from friction point types and audience personas) ──
       const entityNames = new Set<string>();
       for (const fp of website.frictionPoints ?? []) {
-        // Use issueType as structured entity names instead of random capitalized words
-        const typeName = fp.issueType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        // Use issueType as structured entity names instead of random capitalized words          const typeName = fp.issueType.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
         entityNames.add(typeName);
         // Also extract meaningful page URLs as entities
         if (fp.pageUrl && fp.pageUrl !== url) {
@@ -155,9 +154,9 @@ export const analyzeProject = action({
           audienceAnalystScore: report.audienceAnalystScore,
           competitorAnalystScore: report.competitorAnalystScore,
           combinedConfidence: report.combinedConfidence,
-          audienceSegments: audience.segments,
-          competitorCount: competitor.competitors.length,
-          frictionPointCount: website.frictionPoints.length,
+          audienceSegments: audience.segments ?? [],
+          competitorCount: competitor.competitors?.length ?? 0,
+          frictionPointCount: website.frictionPoints?.length ?? 0,
           topRecommendations: combinedRecommendations.slice(0, 5),
         },
       };

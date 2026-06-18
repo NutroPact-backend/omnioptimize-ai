@@ -408,10 +408,10 @@ export default function Dashboard() {
       : "—";
   const totalPages = totalKpis.pagesCrawled.toFixed(0);
   const analyzedCount = totalKpis.count;
-  const pendingCount = projects.filter((p) => p.status === "pending").length;
+  const pendingCount = projects.filter((p: any) => p.status === "pending").length;
 
   const handleAnalyze = async (projectId: string) => {
-    const project = projects.find((p) => p._id === projectId);
+    const project = projects.find((p: any) => p._id === projectId);
     if (!project) return;
 
     setAnalyzingId(projectId);
@@ -640,7 +640,7 @@ export default function Dashboard() {
               </motion.div>
             ) : (
               <div className="grid gap-3">
-                {projects.map((project) => (
+                {projects.map((project: any) => (
                   <ProjectCard
                     key={project._id}
                     project={project}
@@ -653,7 +653,7 @@ export default function Dashboard() {
             )}
 
             {/* ── Actions prompt ── */}
-            {projects.filter((p) => p.status === "pending").length > 0 && (
+            {projects.filter((p: any) => p.status === "pending").length > 0 && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -664,7 +664,7 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <h4 className="text-sm font-medium text-foreground mb-1">
-                    {projects.filter((p) => p.status === "pending").length} project(s) pending analysis
+                    {projects.filter((p: any) => p.status === "pending").length} project(s) pending analysis
                   </h4>
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     Click the <strong>Analyze</strong> button on each project to run an AI-powered visibility

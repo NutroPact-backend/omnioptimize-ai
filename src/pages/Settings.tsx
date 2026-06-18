@@ -525,7 +525,7 @@ export default function SettingsPage() {
                 </Card>
               ) : (
                 <div className="space-y-2">
-                  {connections.map((connection) => (
+                  {connections.map((connection: any) => (
                     <ConnectionCard
                       key={connection._id}
                       connection={connection}

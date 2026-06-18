@@ -94,10 +94,9 @@ export const analyzeWebsite = action({
           "",
           `=== SCHEMA MARKUP (${page.schemaMarkup.length} blocks) ===`,
           page.schemaMarkup.length > 0
-            ? page.schemaMarkup.slice(0, 5).map((s) => {
-                try {
-                  const parsed = JSON.parse(s);
-                  return `- @type: ${parsed["@type"] || "Unknown"}, context: ${parsed["@context"] || ""}`;
+            ? page.schemaMarkup.slice(0, 5).map((s: any) => {
+                try {                    const parsed = JSON.parse(s);
+                    return `- @type: ${parsed["@type"] || "Unknown"}, context: ${parsed["@context"] || ""}`;
                 } catch {
                   return "- (unparseable schema)";
                 }
