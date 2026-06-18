@@ -16,6 +16,21 @@ export const roleValidator = v.union(
 );
 export type Role = Infer<typeof roleValidator>;
 
+export const PROJECT_STATUS = {
+  PENDING: "pending",
+  ANALYZING: "analyzing",
+  ANALYZED: "analyzed",
+  ERROR: "error",
+} as const;
+
+export const projectStatusValidator = v.union(
+  v.literal(PROJECT_STATUS.PENDING),
+  v.literal(PROJECT_STATUS.ANALYZING),
+  v.literal(PROJECT_STATUS.ANALYZED),
+  v.literal(PROJECT_STATUS.ERROR),
+);
+export type ProjectStatus = Infer<typeof projectStatusValidator>;
+
 const schema = defineSchema(
   {
     // default auth tables using convex auth.
@@ -32,12 +47,68 @@ const schema = defineSchema(
       role: v.optional(roleValidator), // role of the user. do not remove
     }).index("email", ["email"]), // index for the email. do not remove or modify
 
-    // add other tables here
+    // ── Projects: a website URL the user wants to analyze ──
+    projects: defineTable({
+      userId: v.id("users"),
+      name: v.string(),
+      url: v.string(),
+      status: projectStatusValidator,
+      // KPI snapshot (updated after analysis)
+      citationScore: v.optional(v.float64()),
+      entityCoverageScore: v.optional(v.float64()),
+      schemaHealthScore: v.optional(v.float64()),
+      readabilityScore: v.optional(v.float64()),
+      keywordCoverage: v.optional(v.float64()),
+      organicVisibilityIndex: v.optional(v.float64()),
+      pagesCrawled: v.optional(v.float64()),
+      entitiesFound: v.optional(v.float64()),
+      schemaErrors: v.optional(v.float64()),
+      linkEquityLoss: v.optional(v.float64()),
+      competitorGapCount: v.optional(v.float64()),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    }).index("by_userId", ["userId"]),
 
-    // tableName: defineTable({
-    //   ...
-    //   // table fields
-    // }).index("by_field", ["field"])
+    // ── Analysis snapshots: historical KPI records per project ──
+    analyses: defineTable({
+      projectId: v.id("projects"),
+      citationScore: v.optional(v.float64()),
+      entityCoverageScore: v.optional(v.float64()),
+      schemaHealthScore: v.optional(v.float64()),
+      readabilityScore: v.optional(v.float64()),
+      keywordCoverage: v.optional(v.float64()),
+      organicVisibilityIndex: v.optional(v.float64()),
+      pagesCrawled: v.optional(v.float64()),
+      entitiesFound: v.optional(v.float64()),
+      schemaErrors: v.optional(v.float64()),
+      linkEquityLoss: v.optional(v.float64()),
+      competitorGapCount: v.optional(v.float64()),
+      summary: v.optional(v.string()),
+      recommendations: v.optional(v.array(v.string())),
+      createdAt: v.number(),
+    }).index("by_projectId", ["projectId", "createdAt"]),
+
+    // ── Entities: extracted entities for the entity knowledge graph ──
+    entities: defineTable({
+      projectId: v.id("projects"),
+      name: v.string(),
+      type: v.string(), // person, product, organization, concept, brand_term
+      salience: v.optional(v.float64()),
+      wikiId: v.optional(v.string()),
+      sourceUrl: v.optional(v.string()),
+    }).index("by_projectId", ["projectId"]),
+
+    // ── Optimizations: actions applied or recommended for a project ──
+    optimizations: defineTable({
+      projectId: v.id("projects"),
+      type: v.string(), // schema_fix, content_gap, entity_link, snippet_opt, etc.
+      status: v.union(v.literal("pending"), v.literal("applied"), v.literal("rolled_back")),
+      description: v.string(),
+      beforeSnapshot: v.optional(v.string()),
+      afterSnapshot: v.optional(v.string()),
+      createdAt: v.number(),
+      appliedAt: v.optional(v.number()),
+    }).index("by_projectId", ["projectId"]),
   },
   {
     schemaValidation: false,

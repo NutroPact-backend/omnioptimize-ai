@@ -8,9 +8,12 @@
  * @module
  */
 
+import type * as analysis from "../analysis.js";
+import type * as analysis_mutations from "../analysis_mutations.js";
 import type * as auth from "../auth.js";
 import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as http from "../http.js";
+import type * as projects from "../projects.js";
 import type * as users from "../users.js";
 
 import type {
@@ -20,9 +23,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  analysis: typeof analysis;
+  analysis_mutations: typeof analysis_mutations;
   auth: typeof auth;
   "auth/emailOtp": typeof auth_emailOtp;
   http: typeof http;
+  projects: typeof projects;
   users: typeof users;
 }>;
 
